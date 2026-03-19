@@ -480,7 +480,7 @@ HTML = """<!DOCTYPE html>
         <label class="toggle-label" id="lblNurPos">Nur Position</label>
       </div>
       <div class="toggle-row" id="mengeToggleRow">
-        <label class="toggle-label active" id="lblEinzel">1 Etikette</label>
+        <label class="toggle-label active" id="lblEinzel">Anzahl = 1</label>
         <label class="toggle-switch">
           <input type="checkbox" id="toggleMenge">
           <span class="toggle-slider"></span>
@@ -532,15 +532,15 @@ HTML = """<!DOCTYPE html>
   <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px 12px;margin-top:6px">
     <div class="form-group">
       <label>Fläche [m²]</label>
-      <input type="text" id="flaeche" class="computed" readonly>
+      <input type="text" id="flaeche">
     </div>
     <div class="form-group">
       <label>Umfang [lfm]</label>
-      <input type="text" id="umfang" class="computed" readonly>
+      <input type="text" id="umfang">
     </div>
     <div class="form-group">
       <label>Gewicht [kg]</label>
-      <input type="text" id="gewicht" class="computed" readonly>
+      <input type="text" id="gewicht">
     </div>
   </div>
 
@@ -639,6 +639,7 @@ HTML = """<!DOCTYPE html>
   }
   document.addEventListener('DOMContentLoaded', function() {
     document.getElementById('toggleMenge').addEventListener('change', updateMengeToggle);
+    leeren();
     updateToggle();
     updateMengeToggle();
   });
