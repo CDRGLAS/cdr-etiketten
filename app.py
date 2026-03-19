@@ -14,9 +14,36 @@ SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 TEMPLATE_PATH = os.path.join(SCRIPT_DIR, 'Etikette_Vorlage.xlsx')
 LOGO_PATH = os.path.join(SCRIPT_DIR, 'CDR_Logo_pos_RGB-01.jpg')
 PRINTER_NAME = 'CAB-EOS5/200 auf Ne04:'
-
 # ===== Data =====
 auf_data = {}
+
+
+def get_sprache(kunden_nr):
+    """Sprache aus Zuordnung in KUNDEN.xlsx."""
+    kunde_info = kunden_data.get(str(kunden_nr), {})
+    return kunde_info.get('sprache', 'de')
+
+
+def load_kunden(path):
+    """Load KUNDEN.xlsx and return dict keyed by Kunden-ID."""
+    wb = openpyxl.load_workbook(path, read_only=True, data_only=True)
+    ws = wb.active
+    data = {}
+    for row in ws.iter_rows(min_row=2, values_only=True):
+        if not row[1]:
+            continue
+        kid = str(int(row[1])).strip()
+        zuordnung = str(row[0] or '').strip()
+        sprache = 'fr' if 'FR' in zuordnung else 'de'
+        data[kid] = {
+            'plz': str(row[4] or '').strip(),
+            'ort': str(row[6] or '').strip(),
+            'sprache': sprache,
+        }
+    wb.close()
+    return data
+
+kunden_data = {}
 
 
 def load_auf(path):
@@ -42,6 +69,12 @@ def load_auf(path):
             except ValueError:
                 termin = None
 
+        # Kunden-PLZ und Ort aus KUNDEN.xlsx
+        kunden_nr = str(row[10] or '').strip()
+        kunde_info = kunden_data.get(kunden_nr, {})
+        plz = kunde_info.get('plz', '')
+        ort = kunde_info.get('ort', '')
+
         data[(doknr, pos)] = {
             'doknr': doknr,
             'pos': pos,
@@ -52,6 +85,9 @@ def load_auf(path):
             'lfdm': float(row[6] or 0),
             'gewicht': float(row[7] or 0),
             'kunde': str(row[11] or '').strip(),
+            'kunden_nr': str(row[10] or '').strip(),
+            'plz': plz,
+            'ort': ort,
             'termin': termin,
             'menge': int(row[17] or 0),
             'breite': int(row[18] or 0),
@@ -176,7 +212,7 @@ HTML = """<!DOCTYPE html>
   .app-header {
     background: var(--cdr-blue);
     color: white;
-    padding: 14px 24px;
+    padding: 8px 24px;
     display: flex;
     align-items: center;
     gap: 16px;
@@ -184,21 +220,85 @@ HTML = """<!DOCTYPE html>
   .app-header h1 { font-size: 18px; font-weight: 600; }
   .app-header span { font-size: 13px; opacity: 0.7; }
 
+  .page-layout {
+    display: flex;
+    gap: 16px;
+    max-width: 1400px;
+    margin: 8px auto;
+    padding: 0 16px;
+  }
   .container {
-    max-width: 800px;
-    margin: 24px auto;
+    flex: 1;
     background: white;
     border-radius: 8px;
     border: 1px solid var(--cdr-border);
-    padding: 24px;
+    padding: 12px 16px;
+  }
+  .sidebar {
+    flex: 0 0 520px;
+    background: white;
+    border-radius: 8px;
+    border: 1px solid var(--cdr-border);
+    padding: 10px 12px;
+    max-height: calc(100vh - 65px);
+    overflow-y: auto;
+  }
+  .sidebar h3 {
+    font-size: 13px;
+    color: var(--cdr-blue);
+    margin-bottom: 10px;
+    border-bottom: 2px solid var(--cdr-blue);
+    padding-bottom: 4px;
+  }
+  .auf-list {
+    list-style: none;
+  }
+  .auf-list li {
+    padding: 4px 8px;
+    font-size: 12px;
+    font-weight: 600;
+    cursor: pointer;
+    border-radius: 4px;
+    transition: background 0.1s;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .auf-list li:hover {
+    background: rgba(0,51,102,0.08);
+  }
+  .auf-list li.active {
+    background: var(--cdr-blue);
+    color: white;
+  }
+  .pos-list {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+  }
+  .pos-list li {
+    padding: 3px 8px 3px 36px;
+    font-size: 11px;
+    cursor: pointer;
+    border-radius: 4px;
+    color: #444;
+    transition: background 0.1s;
+  }
+  .pos-list li:hover {
+    background: rgba(0,51,102,0.08);
+  }
+  .pos-list li.active {
+    background: #e3edf7;
+    color: var(--cdr-blue);
+    font-weight: 700;
   }
 
   h2 {
-    font-size: 15px;
+    font-size: 14px;
     color: var(--cdr-blue);
-    margin-bottom: 16px;
+    margin-bottom: 10px;
     border-bottom: 2px solid var(--cdr-blue);
-    padding-bottom: 6px;
+    padding-bottom: 4px;
   }
 
   .lookup-row {
@@ -209,9 +309,9 @@ HTML = """<!DOCTYPE html>
   }
   .lookup-msg {
     font-size: 13px;
-    min-height: 20px;
-    margin-bottom: 16px;
-    padding: 4px 0;
+    min-height: 16px;
+    margin-bottom: 10px;
+    padding: 2px 0;
   }
   .lookup-msg.success { color: var(--cdr-green); font-weight: 600; }
   .lookup-msg.error { color: #c0392b; }
@@ -219,7 +319,7 @@ HTML = """<!DOCTYPE html>
   .form-grid {
     display: grid;
     grid-template-columns: 1fr 1fr;
-    gap: 10px 20px;
+    gap: 6px 16px;
   }
   .form-grid .full { grid-column: 1 / -1; }
 
@@ -234,10 +334,10 @@ HTML = """<!DOCTYPE html>
   }
   .form-group input {
     width: 100%;
-    padding: 8px 10px;
+    padding: 5px 8px;
     border: 1px solid var(--cdr-border);
     border-radius: 4px;
-    font-size: 14px;
+    font-size: 13px;
     font-family: inherit;
   }
   .form-group input:focus {
@@ -250,8 +350,20 @@ HTML = """<!DOCTYPE html>
     color: #555;
   }
 
+  .top-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    gap: 16px;
+    margin-bottom: 10px;
+  }
+  .options-panel {
+    background: var(--cdr-light);
+    border-radius: 6px;
+    padding: 8px 12px;
+    border: 1px solid var(--cdr-border);
+  }
   .btn-row {
-    margin-top: 20px;
     display: flex;
     gap: 10px;
   }
@@ -267,8 +379,8 @@ HTML = """<!DOCTYPE html>
   .btn-primary { background: var(--cdr-blue); color: white; }
   .btn-primary:hover { background: #004488; }
   .btn-primary:disabled { opacity: 0.5; cursor: wait; }
-  .btn-secondary { background: #e8ecf0; color: #333; }
-  .btn-secondary:hover { background: #d0d5dd; }
+  .btn-secondary { background: #c8ced6; color: #333; }
+  .btn-secondary:hover { background: #b0b8c4; }
 
   .status-bar {
     margin-top: 12px;
@@ -280,6 +392,46 @@ HTML = """<!DOCTYPE html>
   .status-bar.success { display: block; background: #e8f5e9; color: #2e7d32; }
   .status-bar.error { display: block; background: #ffebee; color: #c62828; }
   .status-bar.printing { display: block; background: #e3f2fd; color: #1565c0; }
+
+  .toggle-switch {
+    position: relative;
+    display: inline-block;
+    width: 40px;
+    height: 22px;
+    flex-shrink: 0;
+  }
+  .toggle-switch input { opacity: 0; width: 0; height: 0; }
+  .toggle-slider {
+    position: absolute;
+    cursor: pointer;
+    top: 0; left: 0; right: 0; bottom: 0;
+    background: var(--cdr-blue);
+    border-radius: 22px;
+    transition: 0.2s;
+  }
+  .toggle-slider:before {
+    content: "";
+    position: absolute;
+    height: 16px;
+    width: 16px;
+    left: 3px;
+    bottom: 3px;
+    background: white;
+    border-radius: 50%;
+    transition: 0.2s;
+  }
+  .toggle-switch input:checked + .toggle-slider { background: var(--cdr-blue); }
+  .toggle-switch input:checked + .toggle-slider:before { transform: translateX(18px); }
+  .toggle-row {
+    display: grid;
+    grid-template-columns: 100px 40px 100px;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 6px;
+  }
+  .toggle-row .toggle-label:first-child { text-align: right; }
+  .toggle-label { font-size: 12px; font-weight: 600; color: #555; }
+  .toggle-label.active { color: var(--cdr-blue); }
 
   .file-info {
     font-size: 13px;
@@ -296,20 +448,51 @@ HTML = """<!DOCTYPE html>
   <span>CDR Glas AG</span>
 </div>
 
+<div class="page-layout">
 <div class="container">
   <div class="file-info" id="fileInfo">{{ file_info }}</div>
 
-  <div class="lookup-row">
-    <div class="form-group">
-      <label>Auftrag-Nr.</label>
-      <input type="text" id="auftragNr" placeholder="z.B. 142830">
+  <div class="top-row">
+    <div>
+      <div class="lookup-row">
+        <div class="form-group">
+          <label>Auftrag-Nr.</label>
+          <input type="text" id="auftragNr" placeholder="z.B. 142830">
+        </div>
+        <div class="form-group">
+          <label>Position</label>
+          <input type="text" id="position" placeholder="z.B. 1">
+        </div>
+      </div>
+      <div class="lookup-msg" id="lookupMsg"></div>
     </div>
-    <div class="form-group">
-      <label>Position</label>
-      <input type="text" id="position" placeholder="z.B. 1">
+    <div class="options-panel">
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">
+        <label style="font-size:12px;font-weight:600;color:#555">Sprache:</label>
+        <span id="sprachAnzeige" style="font-weight:700;font-size:14px">–</span>
+      </div>
+      <div class="toggle-row">
+        <label class="toggle-label active" id="lblAllePos">Alle Positionen</label>
+        <label class="toggle-switch">
+          <input type="checkbox" id="toggleAlle" onchange="updateToggle()">
+          <span class="toggle-slider"></span>
+        </label>
+        <label class="toggle-label" id="lblNurPos">Nur Position</label>
+      </div>
+      <div class="toggle-row" id="mengeToggleRow">
+        <label class="toggle-label active" id="lblEinzel">1 Etikette</label>
+        <label class="toggle-switch">
+          <input type="checkbox" id="toggleMenge">
+          <span class="toggle-slider"></span>
+        </label>
+        <label class="toggle-label" id="lblMenge">Anzahl = Menge</label>
+      </div>
+      <div style="display:flex;gap:10px;margin-top:10px">
+        <button class="btn btn-primary" style="flex:1" onclick="druckenStart()">Drucken</button>
+        <button class="btn btn-secondary" style="flex:1" onclick="leeren()">Leeren</button>
+      </div>
     </div>
   </div>
-  <div class="lookup-msg" id="lookupMsg"></div>
 
   <h2>Etikettendaten</h2>
   <div class="form-grid">
@@ -345,6 +528,8 @@ HTML = """<!DOCTYPE html>
       <label>Höhe [mm]</label>
       <input type="number" id="hoehe" min="0">
     </div>
+  </div>
+  <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px 12px;margin-top:6px">
     <div class="form-group">
       <label>Fläche [m²]</label>
       <input type="text" id="flaeche" class="computed" readonly>
@@ -355,19 +540,22 @@ HTML = """<!DOCTYPE html>
     </div>
     <div class="form-group">
       <label>Gewicht [kg]</label>
-      <input type="number" id="gewicht" min="0" step="1">
+      <input type="text" id="gewicht" class="computed" readonly>
     </div>
   </div>
 
-  <div class="btn-row">
-    <button class="btn btn-primary" onclick="druckenPos('de')">DE Position</button>
-    <button class="btn btn-primary" onclick="druckenAlle('de')">DE alle Pos.</button>
-    <button class="btn btn-primary" onclick="druckenPos('fr')">FR Position</button>
-    <button class="btn btn-primary" onclick="druckenAlle('fr')">FR alle Pos.</button>
-    <button class="btn btn-secondary" onclick="leeren()">Leeren</button>
-  </div>
 
   <div class="status-bar" id="statusBar"></div>
+</div>
+
+<div class="sidebar">
+  <h3>Aufträge</h3>
+  <ul class="auf-list" id="aufList">
+    {% for a in auftraege %}
+    <li class="auf-item" data-nr="{{ a.nr }}" data-sprache="{{ a.sprache }}" onclick="selectAuftrag('{{ a.nr }}', '{{ a.sprache }}')"><span style="display:inline-block;width:28px;font-size:10px;font-weight:700;color:{% if a.sprache == 'fr' %}#c0392b{% else %}#2e7d32{% endif %}">{{ a.sprache|upper }}</span><strong>{{ a.nr }}</strong> {{ a.kunde }} <span style="color:#888;font-size:11px">{{ a.plz }} {{ a.ort }}</span></li>
+    {% endfor %}
+  </ul>
+</div>
 </div>
 
 <script>
@@ -436,8 +624,38 @@ HTML = """<!DOCTYPE html>
     document.querySelectorAll('.btn-primary').forEach(b => b.disabled = disabled);
   }
 
-  function druckenPos(lang) {
+  function updateToggle() {
+    const nurPos = document.getElementById('toggleAlle').checked;
+    const mengeRow = document.getElementById('mengeToggleRow');
+    mengeRow.style.opacity = nurPos ? '1' : '0.35';
+    mengeRow.style.pointerEvents = nurPos ? '' : 'none';
+    document.getElementById('lblNurPos').classList.toggle('active', nurPos);
+    document.getElementById('lblAllePos').classList.toggle('active', !nurPos);
+  }
+  function updateMengeToggle() {
+    const menge = document.getElementById('toggleMenge').checked;
+    document.getElementById('lblEinzel').classList.toggle('active', !menge);
+    document.getElementById('lblMenge').classList.toggle('active', menge);
+  }
+  document.addEventListener('DOMContentLoaded', function() {
+    document.getElementById('toggleMenge').addEventListener('change', updateMengeToggle);
+    updateToggle();
+    updateMengeToggle();
+  });
+
+  function druckenStart() {
+    const nurPos = document.getElementById('toggleAlle').checked;
+    if (nurPos) {
+      druckenPos();
+    } else {
+      druckenAlle();
+    }
+  }
+
+  function druckenPos() {
     const data = getFormData();
+    const lang = currentSprache;
+    const nachMenge = document.getElementById('toggleMenge').checked;
     if (!data.doknr) { showStatus('Bitte Auftrag-Nr. eingeben.', 'error'); return; }
 
     showStatus('Drucke Position ' + data.pos + ' ' + lang.toUpperCase() + '...', 'printing');
@@ -446,7 +664,7 @@ HTML = """<!DOCTYPE html>
     fetch('/api/drucken', {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({record: data, lang: lang})
+      body: JSON.stringify({record: data, lang: lang, nach_menge: nachMenge})
     })
     .then(r => r.json())
     .then(result => {
@@ -460,8 +678,9 @@ HTML = """<!DOCTYPE html>
     .finally(() => setButtons(false));
   }
 
-  function druckenAlle(lang) {
+  function druckenAlle() {
     const nr = document.getElementById('auftragNr').value.trim();
+    const lang = currentSprache;
     if (!nr) { showStatus('Bitte Auftrag-Nr. eingeben.', 'error'); return; }
 
     showStatus('Drucke alle Positionen von Auftrag ' + nr + ' ' + lang.toUpperCase() + '...', 'printing');
@@ -493,6 +712,60 @@ HTML = """<!DOCTYPE html>
     document.getElementById('statusBar').className = 'status-bar';
   }
 
+  let currentSprache = 'de';
+
+  let openAuftrag = '';
+
+  function selectAuftrag(nr, sprache) {
+    // Toggle: erneuter Klick blendet Positionen aus
+    if (openAuftrag === nr) {
+      document.querySelectorAll('.pos-list').forEach(ul => ul.remove());
+      document.querySelector('.auf-item[data-nr="' + nr + '"]').classList.remove('active');
+      openAuftrag = '';
+      return;
+    }
+    openAuftrag = nr;
+
+    document.getElementById('auftragNr').value = nr;
+    document.getElementById('position').value = '1';
+    currentSprache = sprache || 'de';
+    document.getElementById('sprachAnzeige').textContent = currentSprache.toUpperCase();
+    document.getElementById('sprachAnzeige').style.color = currentSprache === 'fr' ? '#c0392b' : '#2e7d32';
+
+    // Highlight + alte Positionslisten entfernen
+    document.querySelectorAll('.pos-list').forEach(ul => ul.remove());
+    document.querySelectorAll('.auf-item').forEach(li => {
+      li.classList.toggle('active', li.dataset.nr === nr);
+    });
+
+    // Positionen laden
+    fetch('/api/positionen?' + new URLSearchParams({nr}))
+      .then(r => r.json())
+      .then(positionen => {
+        const aufLi = document.querySelector('.auf-item[data-nr="' + nr + '"]');
+        if (!aufLi || !positionen.length) return;
+        const ul = document.createElement('ul');
+        ul.className = 'pos-list';
+        positionen.forEach((p, i) => {
+          const li = document.createElement('li');
+          li.textContent = 'Pos ' + p.pos + '  —  ' + p.menge + ' Stk  ' + p.breite + '×' + p.hoehe + '  ' + p.produkt;
+          if (i === 0) li.classList.add('active');
+          li.addEventListener('click', function(e) {
+            e.stopPropagation();
+            document.getElementById('position').value = p.pos;
+            document.querySelectorAll('.pos-list li').forEach(x => x.classList.remove('active'));
+            li.classList.add('active');
+            autoSearch();
+          });
+          ul.appendChild(li);
+        });
+        aufLi.after(ul);
+      });
+
+    autoSearch();
+  }
+
+
   function showStatus(text, type) {
     const bar = document.getElementById('statusBar');
     bar.textContent = text;
@@ -503,10 +776,33 @@ HTML = """<!DOCTYPE html>
 </html>"""
 
 
+AUF_PATH = r'R:\CDR-Glas\Lagerverwaltung\AUF.xlsx'
+
+KUNDEN_PATH = r'R:\CDR-Glas\Lagerverwaltung\KUNDEN.xlsx'
+
+def reload_auf():
+    """AUF.xlsx und KUNDEN.xlsx neu einlesen."""
+    global auf_data, kunden_data
+    if os.path.exists(KUNDEN_PATH):
+        kunden_data = load_kunden(KUNDEN_PATH)
+    if os.path.exists(AUF_PATH):
+        auf_data = load_auf(AUF_PATH)
+    return auf_data
+
 @app.route('/')
 def index():
-    info = f'AUF.xlsx – {len(auf_data)} Aufträge geladen (R:\\CDR-Glas\\Lagerverwaltung)' if auf_data else 'Keine Datei geladen'
-    return render_template_string(HTML, file_info=info)
+    reload_auf()
+    n_auftraege = len(set(k[0] for k in auf_data.keys())) if auf_data else 0
+    info = f'AUF.xlsx – {n_auftraege} Aufträge / {len(auf_data)} Positionen geladen' if auf_data else 'Keine Datei geladen'
+    # Auftragsliste mit Kunde (erste Position pro Auftrag)
+    auftraege = []
+    seen = set()
+    for (doknr, pos), rec in sorted(auf_data.items()):
+        if doknr not in seen:
+            seen.add(doknr)
+            sprache = get_sprache(rec['kunden_nr'])
+            auftraege.append({'nr': doknr, 'kunde': rec['kunde'], 'plz': rec['plz'], 'ort': rec['ort'], 'kunden_nr': rec['kunden_nr'], 'sprache': sprache})
+    return render_template_string(HTML, file_info=info, auftraege=auftraege)
 
 
 @app.route('/api/suchen')
@@ -551,15 +847,35 @@ def api_drucken():
     else:
         record['termin'] = None
 
+    nach_menge = data.get('nach_menge', True)
+    if not nach_menge:
+        record['menge'] = 1
+
     try:
         drucken(record, lang)
         return jsonify({
             'ok': True,
-            'menge': record.get('menge', 1),
+            'menge': int(record.get('menge', 1)),
             'printer': PRINTER_NAME
         })
     except Exception as e:
         return jsonify({'ok': False, 'error': str(e)})
+
+
+@app.route('/api/positionen')
+def api_positionen():
+    nr = request.args.get('nr', '').strip()
+    positionen = []
+    for (doknr, pos), rec in sorted(auf_data.items()):
+        if doknr == nr:
+            positionen.append({
+                'pos': pos,
+                'menge': rec['menge'],
+                'breite': rec['breite'],
+                'hoehe': rec['hoehe'],
+                'produkt': rec['produkt'][:40],
+            })
+    return jsonify(positionen)
 
 
 @app.route('/api/drucken_alle', methods=['POST'])
@@ -591,6 +907,14 @@ def api_drucken_alle():
 
 
 if __name__ == '__main__':
+    # KUNDEN.xlsx laden
+    kunden_path = r'R:\CDR-Glas\Lagerverwaltung\KUNDEN.xlsx'
+    if os.path.exists(kunden_path):
+        kunden_data = load_kunden(kunden_path)
+        print(f'KUNDEN.xlsx geladen: {len(kunden_data)} Kunden')
+    else:
+        print(f'WARNUNG: {kunden_path} nicht gefunden!')
+
     # AUF.xlsx vom Netzlaufwerk laden
     auf_path = r'R:\CDR-Glas\Lagerverwaltung\AUF.xlsx'
     if os.path.exists(auf_path):
