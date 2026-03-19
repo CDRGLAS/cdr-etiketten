@@ -13,8 +13,6 @@ from flask import Flask, render_template_string, request, jsonify
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 TEMPLATE_PATH = os.path.join(SCRIPT_DIR, 'Etikette_Vorlage.xlsx')
 LOGO_PATH = os.path.join(SCRIPT_DIR, 'CDR_Logo_pos_RGB-01.jpg')
-OUTPUT_DE = os.path.join(SCRIPT_DIR, 'Etikette_Druck_DE.xlsx')
-OUTPUT_FR = os.path.join(SCRIPT_DIR, 'Etikette_Druck_FR.xlsx')
 PRINTER_NAME = 'CAB-EOS5/200 auf Ne04:'
 
 # ===== Data =====
@@ -105,27 +103,48 @@ def fill_template(record):
 
 
 def drucken(record, lang='de'):
-    wb = fill_template(record)
-    output_path = OUTPUT_FR if lang == 'fr' else OUTPUT_DE
-    sheet_name = 'Glas-Etikette FR' if lang == 'fr' else 'Glas-Etikette'
-
-    if lang == 'fr':
-        wb.active = wb.sheetnames.index('Glas-Etikette FR')
-    else:
-        wb.active = wb.sheetnames.index('Glas-Etikette')
-
-    wb.save(output_path)
-    wb.close()
-
+    """Vorlage direkt in Excel öffnen, Zellen befüllen, drucken, ohne Speichern schliessen."""
     import win32com.client
+    sheet_name = 'Glas-Etikette FR' if lang == 'fr' else 'Glas-Etikette'
+    barcode = build_barcode_text(record['doknr'], record['pos'])
+
     excel = win32com.client.Dispatch('Excel.Application')
     excel.Visible = False
     excel.DisplayAlerts = False
     try:
-        xwb = excel.Workbooks.Open(os.path.abspath(output_path))
+        xwb = excel.Workbooks.Open(os.path.abspath(TEMPLATE_PATH))
+        ws = xwb.Worksheets('Glas-Etikette')
+
+        # Zellen befüllen
+        ws.Range('E1').Value = barcode
+        ws.Range('K1').Value = barcode
+        ws.Range('G4').Value = int(record['doknr'])
+        ws.Range('H4').Value = int(record['pos'])
+        ws.Range('I1').Value = int(record['doknr'])
+        ws.Range('I9').Value = int(record['pos'])
+        ws.Range('G5').Value = record['termin']
+        ws.Range('A8').Value = record['kunde']
+        ws.Range('A11').Value = record['kommission']
+        ws.Range('A14').Value = record['kunden_pos']
+        ws.Range('A17').Value = record['produkt']
+        ws.Range('B19').Value = record['menge']
+        ws.Range('E19').Value = record['breite']
+        ws.Range('H19').Value = record['hoehe']
+        ws.Range('H20').Value = round(record['gewicht'])
+        ws.Range('K15').Value = ''
+
+        # FR barcode cells
+        ws_fr = xwb.Worksheets('Glas-Etikette FR')
+        ws_fr.Range('E1').Value = barcode
+        ws_fr.Range('K1').Value = barcode
+        ws_fr.Range('K15').Value = ''
+
+        # Drucken
         xws = xwb.Worksheets(sheet_name)
         copies = int(record.get('menge', 1)) or 1
         xws.PrintOut(Copies=copies, ActivePrinter=PRINTER_NAME)
+
+        # Schliessen ohne Speichern
         xwb.Close(SaveChanges=False)
     finally:
         excel.DisplayAlerts = True
@@ -341,8 +360,10 @@ HTML = """<!DOCTYPE html>
   </div>
 
   <div class="btn-row">
-    <button class="btn btn-primary" id="btnDE" onclick="drucken('de')">Drucken DE</button>
-    <button class="btn btn-primary" id="btnFR" onclick="drucken('fr')">Drucken FR</button>
+    <button class="btn btn-primary" onclick="druckenPos('de')">DE Position</button>
+    <button class="btn btn-primary" onclick="druckenAlle('de')">DE alle Pos.</button>
+    <button class="btn btn-primary" onclick="druckenPos('fr')">FR Position</button>
+    <button class="btn btn-primary" onclick="druckenAlle('fr')">FR alle Pos.</button>
     <button class="btn btn-secondary" onclick="leeren()">Leeren</button>
   </div>
 
@@ -411,16 +432,16 @@ HTML = """<!DOCTYPE html>
     };
   }
 
-  function drucken(lang) {
-    const data = getFormData();
-    if (!data.doknr) {
-      showStatus('Bitte Auftrag-Nr. eingeben.', 'error');
-      return;
-    }
+  function setButtons(disabled) {
+    document.querySelectorAll('.btn-primary').forEach(b => b.disabled = disabled);
+  }
 
-    showStatus('Drucke ' + (lang === 'fr' ? 'FR' : 'DE') + '...', 'printing');
-    document.getElementById('btnDE').disabled = true;
-    document.getElementById('btnFR').disabled = true;
+  function druckenPos(lang) {
+    const data = getFormData();
+    if (!data.doknr) { showStatus('Bitte Auftrag-Nr. eingeben.', 'error'); return; }
+
+    showStatus('Drucke Position ' + data.pos + ' ' + lang.toUpperCase() + '...', 'printing');
+    setButtons(true);
 
     fetch('/api/drucken', {
       method: 'POST',
@@ -430,16 +451,37 @@ HTML = """<!DOCTYPE html>
     .then(r => r.json())
     .then(result => {
       if (result.ok) {
-        showStatus(result.menge + 'x Etikette ' + lang.toUpperCase() + ' gedruckt auf ' + result.printer, 'success');
+        showStatus(result.menge + 'x Etikette ' + lang.toUpperCase() + ' (Pos ' + data.pos + ') gedruckt', 'success');
       } else {
         showStatus('Fehler: ' + result.error, 'error');
       }
     })
     .catch(err => showStatus('Fehler: ' + err, 'error'))
-    .finally(() => {
-      document.getElementById('btnDE').disabled = false;
-      document.getElementById('btnFR').disabled = false;
-    });
+    .finally(() => setButtons(false));
+  }
+
+  function druckenAlle(lang) {
+    const nr = document.getElementById('auftragNr').value.trim();
+    if (!nr) { showStatus('Bitte Auftrag-Nr. eingeben.', 'error'); return; }
+
+    showStatus('Drucke alle Positionen von Auftrag ' + nr + ' ' + lang.toUpperCase() + '...', 'printing');
+    setButtons(true);
+
+    fetch('/api/drucken_alle', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({doknr: nr, lang: lang})
+    })
+    .then(r => r.json())
+    .then(result => {
+      if (result.ok) {
+        showStatus(result.total + ' Etiketten ' + lang.toUpperCase() + ' gedruckt (' + result.positionen + ' Positionen)', 'success');
+      } else {
+        showStatus('Fehler: ' + result.error, 'error');
+      }
+    })
+    .catch(err => showStatus('Fehler: ' + err, 'error'))
+    .finally(() => setButtons(false));
   }
 
   function leeren() {
@@ -514,6 +556,34 @@ def api_drucken():
         return jsonify({
             'ok': True,
             'menge': record.get('menge', 1),
+            'printer': PRINTER_NAME
+        })
+    except Exception as e:
+        return jsonify({'ok': False, 'error': str(e)})
+
+
+@app.route('/api/drucken_alle', methods=['POST'])
+def api_drucken_alle():
+    data = request.json
+    doknr = str(data['doknr']).strip()
+    lang = data.get('lang', 'de')
+
+    # Alle Positionen zu diesem Auftrag finden
+    positionen = [v for k, v in auf_data.items() if k[0] == doknr]
+
+    if not positionen:
+        return jsonify({'ok': False, 'error': f'Keine Positionen für Auftrag {doknr} gefunden.'})
+
+    total = 0
+    try:
+        for record in positionen:
+            rec = dict(record)
+            drucken(rec, lang)
+            total += rec.get('menge', 1)
+        return jsonify({
+            'ok': True,
+            'total': total,
+            'positionen': len(positionen),
             'printer': PRINTER_NAME
         })
     except Exception as e:
