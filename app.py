@@ -3,6 +3,7 @@ CDR Glas AG – Handelsetiketten drucken (Web-App)
 Flask-basierte Web-Applikation.
 """
 import os
+import json
 from datetime import datetime
 from copy import copy
 import openpyxl
@@ -14,8 +15,31 @@ SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 TEMPLATE_PATH = os.path.join(SCRIPT_DIR, 'Etikette_Vorlage.xlsx')
 LOGO_PATH = os.path.join(SCRIPT_DIR, 'CDR_Logo_pos_RGB-01.jpg')
 PRINTER_NAME = 'CAB-EOS5/200 auf Ne04:'
+DRUCK_LOG_PATH = os.path.join(SCRIPT_DIR, 'druck_log.json')
+
 # ===== Data =====
 auf_data = {}
+
+
+def load_druck_log():
+    if os.path.exists(DRUCK_LOG_PATH):
+        with open(DRUCK_LOG_PATH, 'r', encoding='utf-8') as f:
+            return json.load(f)
+    return {}
+
+
+def save_druck_log(log):
+    with open(DRUCK_LOG_PATH, 'w', encoding='utf-8') as f:
+        json.dump(log, f, ensure_ascii=False)
+
+
+def log_printed(doknr, pos):
+    log = load_druck_log()
+    if doknr not in log:
+        log[doknr] = []
+    if pos not in log[doknr]:
+        log[doknr].append(pos)
+    save_druck_log(log)
 
 
 def get_sprache(kunden_nr):
@@ -141,6 +165,8 @@ def fill_template(record):
 def drucken(record, lang='de'):
     """Vorlage direkt in Excel öffnen, Zellen befüllen, drucken, ohne Speichern schliessen."""
     import win32com.client
+    import pythoncom
+    pythoncom.CoInitialize()
     sheet_name = 'Glas-Etikette FR' if lang == 'fr' else 'Glas-Etikette'
     barcode = build_barcode_text(record['doknr'], record['pos'])
 
@@ -185,6 +211,7 @@ def drucken(record, lang='de'):
     finally:
         excel.DisplayAlerts = True
         excel.Quit()
+        pythoncom.CoUninitialize()
 
 
 # ===== Flask App =====
@@ -271,6 +298,15 @@ HTML = """<!DOCTYPE html>
     background: var(--cdr-blue);
     color: white;
   }
+  .auf-list li.printed {
+    color: var(--cdr-green);
+  }
+  .auf-list li.printed::before {
+    content: "✓ ";
+  }
+  .auf-list li.active.printed {
+    color: white;
+  }
   .pos-list {
     list-style: none;
     margin: 0;
@@ -291,6 +327,12 @@ HTML = """<!DOCTYPE html>
     background: #e3edf7;
     color: var(--cdr-blue);
     font-weight: 700;
+  }
+  .pos-list li.printed {
+    color: var(--cdr-green);
+  }
+  .pos-list li.printed::before {
+    content: "✓ ";
   }
 
   h2 {
@@ -552,7 +594,7 @@ HTML = """<!DOCTYPE html>
   <h3>Aufträge</h3>
   <ul class="auf-list" id="aufList">
     {% for a in auftraege %}
-    <li class="auf-item" data-nr="{{ a.nr }}" data-sprache="{{ a.sprache }}" onclick="selectAuftrag('{{ a.nr }}', '{{ a.sprache }}')"><span style="display:inline-block;width:28px;font-size:10px;font-weight:700;color:{% if a.sprache == 'fr' %}#c0392b{% else %}#2e7d32{% endif %}">{{ a.sprache|upper }}</span><strong>{{ a.nr }}</strong> {{ a.kunde }} <span style="color:#888;font-size:11px">{{ a.plz }} {{ a.ort }}</span></li>
+    <li class="auf-item{% if a.printed %} printed{% endif %}" data-nr="{{ a.nr }}" data-sprache="{{ a.sprache }}" onclick="selectAuftrag('{{ a.nr }}', '{{ a.sprache }}')"><span style="display:inline-block;width:28px;font-size:10px;font-weight:700;color:{% if a.sprache == 'fr' %}#c0392b{% else %}#2e7d32{% endif %}">{{ a.sprache|upper }}</span><strong>{{ a.nr }}</strong> {{ a.kunde }} <span style="color:#888;font-size:11px">{{ a.plz }} {{ a.ort }}</span></li>
     {% endfor %}
   </ul>
 </div>
@@ -647,10 +689,42 @@ HTML = """<!DOCTYPE html>
   function druckenStart() {
     const nurPos = document.getElementById('toggleAlle').checked;
     if (nurPos) {
-      druckenPos();
+      checkAndDruckenPos();
     } else {
-      druckenAlle();
+      checkAndDruckenAlle();
     }
+  }
+
+  function checkAndDruckenPos() {
+    const data = getFormData();
+    if (!data.doknr) { showStatus('Bitte Auftrag-Nr. eingeben.', 'error'); return; }
+    // Prüfe ob Position bereits gedruckt
+    const posItems = document.querySelectorAll('.pos-list li');
+    let alreadyPrinted = false;
+    posItems.forEach(li => {
+      if (li.classList.contains('active') && li.classList.contains('printed')) {
+        alreadyPrinted = true;
+      }
+    });
+    // Falls keine Positionsliste offen, prüfe Auftrag
+    if (posItems.length === 0) {
+      const aufLi = document.querySelector('.auf-item[data-nr="' + data.doknr + '"]');
+      if (aufLi && aufLi.classList.contains('printed')) alreadyPrinted = true;
+    }
+    if (alreadyPrinted) {
+      if (!confirm('Position ' + data.pos + ' wurde bereits gedruckt. Trotzdem erneut drucken?')) return;
+    }
+    druckenPos();
+  }
+
+  function checkAndDruckenAlle() {
+    const nr = document.getElementById('auftragNr').value.trim();
+    if (!nr) { showStatus('Bitte Auftrag-Nr. eingeben.', 'error'); return; }
+    const aufLi = document.querySelector('.auf-item[data-nr="' + nr + '"]');
+    if (aufLi && aufLi.classList.contains('printed')) {
+      if (!confirm('Auftrag ' + nr + ' wurde bereits gedruckt. Trotzdem erneut drucken?')) return;
+    }
+    druckenAlle();
   }
 
   function druckenPos() {
@@ -671,6 +745,7 @@ HTML = """<!DOCTYPE html>
     .then(result => {
       if (result.ok) {
         showStatus(result.menge + 'x Etikette ' + lang.toUpperCase() + ' (Pos ' + data.pos + ') gedruckt', 'success');
+        markPrinted(data.doknr, data.pos);
       } else {
         showStatus('Fehler: ' + result.error, 'error');
       }
@@ -696,6 +771,7 @@ HTML = """<!DOCTYPE html>
     .then(result => {
       if (result.ok) {
         showStatus(result.total + ' Etiketten ' + lang.toUpperCase() + ' gedruckt (' + result.positionen + ' Positionen)', 'success');
+        markAllPrinted(nr);
       } else {
         showStatus('Fehler: ' + result.error, 'error');
       }
@@ -751,6 +827,7 @@ HTML = """<!DOCTYPE html>
           const li = document.createElement('li');
           li.textContent = 'Pos ' + p.pos + '  —  ' + p.menge + ' Stk  ' + p.breite + '×' + p.hoehe + '  ' + p.produkt;
           if (i === 0) li.classList.add('active');
+          if (p.printed) li.classList.add('printed');
           li.addEventListener('click', function(e) {
             e.stopPropagation();
             document.getElementById('position').value = p.pos;
@@ -766,6 +843,35 @@ HTML = """<!DOCTYPE html>
     autoSearch();
   }
 
+
+  function markPrinted(doknr, pos) {
+    // Position markieren
+    document.querySelectorAll('.pos-list li').forEach(li => {
+      if (li.textContent.indexOf('Pos ' + pos + ' ') === 0 || li.textContent.indexOf('Pos ' + pos + ' ') > 0) {
+        li.classList.add('printed');
+      }
+    });
+    // Prüfen ob alle Positionen gedruckt -> Auftrag markieren
+    checkAuftragPrinted(doknr);
+  }
+
+  function markAllPrinted(doknr) {
+    // Alle Positionen markieren
+    document.querySelectorAll('.pos-list li').forEach(li => {
+      li.classList.add('printed');
+    });
+    // Auftrag markieren
+    const aufLi = document.querySelector('.auf-item[data-nr="' + doknr + '"]');
+    if (aufLi) aufLi.classList.add('printed');
+  }
+
+  function checkAuftragPrinted(doknr) {
+    const posItems = document.querySelectorAll('.pos-list li');
+    if (posItems.length === 0) return;
+    const allPrinted = Array.from(posItems).every(li => li.classList.contains('printed'));
+    const aufLi = document.querySelector('.auf-item[data-nr="' + doknr + '"]');
+    if (aufLi && allPrinted) aufLi.classList.add('printed');
+  }
 
   function showStatus(text, type) {
     const bar = document.getElementById('statusBar');
@@ -802,7 +908,12 @@ def index():
         if doknr not in seen:
             seen.add(doknr)
             sprache = get_sprache(rec['kunden_nr'])
-            auftraege.append({'nr': doknr, 'kunde': rec['kunde'], 'plz': rec['plz'], 'ort': rec['ort'], 'kunden_nr': rec['kunden_nr'], 'sprache': sprache})
+            # Prüfe ob alle Positionen dieses Auftrags gedruckt wurden
+            log = load_druck_log()
+            gedruckt = log.get(doknr, [])
+            alle_pos = [k[1] for k in auf_data.keys() if k[0] == doknr]
+            all_printed = len(alle_pos) > 0 and all(p in gedruckt for p in alle_pos)
+            auftraege.append({'nr': doknr, 'kunde': rec['kunde'], 'plz': rec['plz'], 'ort': rec['ort'], 'kunden_nr': rec['kunden_nr'], 'sprache': sprache, 'printed': all_printed})
     return render_template_string(HTML, file_info=info, auftraege=auftraege)
 
 
@@ -854,6 +965,7 @@ def api_drucken():
 
     try:
         drucken(record, lang)
+        log_printed(record['doknr'], record['pos'])
         return jsonify({
             'ok': True,
             'menge': int(record.get('menge', 1)),
@@ -866,6 +978,8 @@ def api_drucken():
 @app.route('/api/positionen')
 def api_positionen():
     nr = request.args.get('nr', '').strip()
+    log = load_druck_log()
+    gedruckt = log.get(nr, [])
     positionen = []
     for (doknr, pos), rec in sorted(auf_data.items()):
         if doknr == nr:
@@ -875,6 +989,7 @@ def api_positionen():
                 'breite': rec['breite'],
                 'hoehe': rec['hoehe'],
                 'produkt': rec['produkt'][:40],
+                'printed': pos in gedruckt,
             })
     return jsonify(positionen)
 
@@ -896,6 +1011,7 @@ def api_drucken_alle():
         for record in positionen:
             rec = dict(record)
             drucken(rec, lang)
+            log_printed(doknr, rec['pos'])
             total += rec.get('menge', 1)
         return jsonify({
             'ok': True,
