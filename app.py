@@ -192,7 +192,7 @@ def _befuelle_und_drucke(excel, xwb, record, lang, copies):
 
     xws = xwb.Worksheets(sheet_name)
     for _ in range(copies):
-        pass  # xws.PrintOut()  # TESTMODUS: Druck deaktiviert
+        xws.PrintOut()
 
 
 def drucken(record, lang='de'):
