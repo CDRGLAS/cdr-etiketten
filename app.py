@@ -162,53 +162,65 @@ def fill_template(record):
     return wb
 
 
+def _befuelle_und_drucke(excel, xwb, record, lang, copies):
+    """Zellen in der Vorlage befüllen und drucken (Excel bleibt offen)."""
+    sheet_name = 'Glas-Etikette FR' if lang == 'fr' else 'Glas-Etikette'
+    barcode = build_barcode_text(record['doknr'], record['pos'])
+
+    ws = xwb.Worksheets('Glas-Etikette')
+    ws.Range('E1').Value = barcode
+    ws.Range('K1').Value = barcode
+    ws.Range('G4').Value = int(record['doknr'])
+    ws.Range('H4').Value = int(record['pos'])
+    ws.Range('I1').Value = int(record['doknr'])
+    ws.Range('I9').Value = int(record['pos'])
+    ws.Range('G5').Value = record['termin']
+    ws.Range('A8').Value = record['kunde']
+    ws.Range('A11').Value = record['kommission']
+    ws.Range('A14').Value = record['kunden_pos']
+    ws.Range('A17').Value = record['produkt']
+    ws.Range('B19').Value = record['menge']
+    ws.Range('E19').Value = record['breite']
+    ws.Range('H19').Value = record['hoehe']
+    ws.Range('H20').Value = round(record['gewicht'])
+    ws.Range('K15').Value = ''
+
+    ws_fr = xwb.Worksheets('Glas-Etikette FR')
+    ws_fr.Range('E1').Value = barcode
+    ws_fr.Range('K1').Value = barcode
+    ws_fr.Range('K15').Value = ''
+
+    xws = xwb.Worksheets(sheet_name)
+    for _ in range(copies):
+        xws.PrintOut()
+
+
 def drucken(record, lang='de'):
-    """Vorlage direkt in Excel öffnen, Zellen befüllen, drucken, ohne Speichern schliessen."""
+    """Einzelne Position drucken."""
+    drucken_batch([record], lang)
+
+
+def drucken_batch(records, lang='de', nach_menge=True):
+    """Mehrere Records drucken – Excel wird nur einmal geöffnet."""
     import win32com.client
     import pythoncom
     pythoncom.CoInitialize()
-    sheet_name = 'Glas-Etikette FR' if lang == 'fr' else 'Glas-Etikette'
-    barcode = build_barcode_text(record['doknr'], record['pos'])
 
     excel = win32com.client.Dispatch('Excel.Application')
     excel.Visible = False
     excel.DisplayAlerts = False
+    excel.ScreenUpdating = False
     try:
         xwb = excel.Workbooks.Open(os.path.abspath(TEMPLATE_PATH))
-        ws = xwb.Worksheets('Glas-Etikette')
+        excel.ActivePrinter = PRINTER_NAME
 
-        # Zellen befüllen
-        ws.Range('E1').Value = barcode
-        ws.Range('K1').Value = barcode
-        ws.Range('G4').Value = int(record['doknr'])
-        ws.Range('H4').Value = int(record['pos'])
-        ws.Range('I1').Value = int(record['doknr'])
-        ws.Range('I9').Value = int(record['pos'])
-        ws.Range('G5').Value = record['termin']
-        ws.Range('A8').Value = record['kunde']
-        ws.Range('A11').Value = record['kommission']
-        ws.Range('A14').Value = record['kunden_pos']
-        ws.Range('A17').Value = record['produkt']
-        ws.Range('B19').Value = record['menge']
-        ws.Range('E19').Value = record['breite']
-        ws.Range('H19').Value = record['hoehe']
-        ws.Range('H20').Value = round(record['gewicht'])
-        ws.Range('K15').Value = ''
+        for record in records:
+            copies = max(1, int(float(record.get('menge', 1)))) if nach_menge else 1
+            _befuelle_und_drucke(excel, xwb, record, lang, copies)
 
-        # FR barcode cells
-        ws_fr = xwb.Worksheets('Glas-Etikette FR')
-        ws_fr.Range('E1').Value = barcode
-        ws_fr.Range('K1').Value = barcode
-        ws_fr.Range('K15').Value = ''
-
-        # Drucken
-        xws = xwb.Worksheets(sheet_name)
-        copies = int(record.get('menge', 1)) or 1
-        xws.PrintOut(Copies=copies, ActivePrinter=PRINTER_NAME)
-
-        # Schliessen ohne Speichern
         xwb.Close(SaveChanges=False)
     finally:
+        excel.ScreenUpdating = True
         excel.DisplayAlerts = True
         excel.Quit()
         pythoncom.CoUninitialize()
@@ -514,6 +526,14 @@ HTML = """<!DOCTYPE html>
         <span id="sprachAnzeige" style="font-weight:700;font-size:14px">–</span>
       </div>
       <div class="toggle-row">
+        <label class="toggle-label active" id="lblAllesDrucken">Alles drucken</label>
+        <label class="toggle-switch">
+          <input type="checkbox" id="toggleAlles" onchange="updateToggle()">
+          <span class="toggle-slider"></span>
+        </label>
+        <label class="toggle-label" id="lblNurAuftrag">Nur Auftrag</label>
+      </div>
+      <div class="toggle-row" id="posToggleRow">
         <label class="toggle-label active" id="lblAllePos">Alle Positionen</label>
         <label class="toggle-switch">
           <input type="checkbox" id="toggleAlle" onchange="updateToggle()">
@@ -522,12 +542,12 @@ HTML = """<!DOCTYPE html>
         <label class="toggle-label" id="lblNurPos">Nur Position</label>
       </div>
       <div class="toggle-row" id="mengeToggleRow">
-        <label class="toggle-label active" id="lblEinzel">Anzahl = 1</label>
+        <label class="toggle-label active" id="lblMenge">Anzahl = Menge</label>
         <label class="toggle-switch">
           <input type="checkbox" id="toggleMenge">
           <span class="toggle-slider"></span>
         </label>
-        <label class="toggle-label" id="lblMenge">Anzahl = Menge</label>
+        <label class="toggle-label" id="lblEinzel">Anzahl = 1</label>
       </div>
       <div style="display:flex;gap:10px;margin-top:10px">
         <button class="btn btn-primary" style="flex:1" onclick="druckenStart()">Drucken</button>
@@ -667,17 +687,36 @@ HTML = """<!DOCTYPE html>
   }
 
   function updateToggle() {
+    const nurAuftrag = document.getElementById('toggleAlles').checked;
     const nurPos = document.getElementById('toggleAlle').checked;
+    const posRow = document.getElementById('posToggleRow');
     const mengeRow = document.getElementById('mengeToggleRow');
-    mengeRow.style.opacity = nurPos ? '1' : '0.35';
-    mengeRow.style.pointerEvents = nurPos ? '' : 'none';
+
+    // Slider 1: Alles drucken ↔ Nur Auftrag
+    document.getElementById('lblAllesDrucken').classList.toggle('active', !nurAuftrag);
+    document.getElementById('lblNurAuftrag').classList.toggle('active', nurAuftrag);
+
+    // Wenn "Alles drucken": Slider 2+3 ausgrauen
+    if (!nurAuftrag) {
+      posRow.style.opacity = '0.35';
+      posRow.style.pointerEvents = 'none';
+      mengeRow.style.opacity = '0.35';
+      mengeRow.style.pointerEvents = 'none';
+    } else {
+      posRow.style.opacity = '1';
+      posRow.style.pointerEvents = '';
+      // Slider 3 nur aktiv wenn "Nur Position"
+      mengeRow.style.opacity = nurPos ? '1' : '0.35';
+      mengeRow.style.pointerEvents = nurPos ? '' : 'none';
+    }
+
     document.getElementById('lblNurPos').classList.toggle('active', nurPos);
     document.getElementById('lblAllePos').classList.toggle('active', !nurPos);
   }
   function updateMengeToggle() {
-    const menge = document.getElementById('toggleMenge').checked;
-    document.getElementById('lblEinzel').classList.toggle('active', !menge);
-    document.getElementById('lblMenge').classList.toggle('active', menge);
+    const einzeln = document.getElementById('toggleMenge').checked;
+    document.getElementById('lblEinzel').classList.toggle('active', einzeln);
+    document.getElementById('lblMenge').classList.toggle('active', !einzeln);
   }
   document.addEventListener('DOMContentLoaded', function() {
     document.getElementById('toggleMenge').addEventListener('change', updateMengeToggle);
@@ -687,12 +726,37 @@ HTML = """<!DOCTYPE html>
   });
 
   function druckenStart() {
+    const allesDrucken = !document.getElementById('toggleAlles').checked;
     const nurPos = document.getElementById('toggleAlle').checked;
-    if (nurPos) {
+    if (allesDrucken) {
+      checkAndDruckenAlles();
+    } else if (nurPos) {
       checkAndDruckenPos();
     } else {
       checkAndDruckenAlle();
     }
+  }
+
+  function checkAndDruckenAlles() {
+    if (!confirm('Alle Aufträge (' + document.querySelectorAll('.auf-item').length + ') mit allen Positionen drucken?')) return;
+    showStatus('Drucke ALLE Aufträge...', 'printing');
+    setButtons(true);
+    fetch('/api/drucken_alles', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({lang: currentSprache})
+    })
+    .then(r => r.json())
+    .then(result => {
+      if (result.ok) {
+        showStatus(result.total + ' Etiketten für ' + result.auftraege + ' Aufträge gedruckt', 'success');
+        loadAuftraege();
+      } else {
+        showStatus('Fehler: ' + result.error, 'error');
+      }
+    })
+    .catch(err => showStatus('Fehler: ' + err, 'error'))
+    .finally(() => setButtons(false));
   }
 
   function checkAndDruckenPos() {
@@ -730,7 +794,7 @@ HTML = """<!DOCTYPE html>
   function druckenPos() {
     const data = getFormData();
     const lang = currentSprache;
-    const nachMenge = document.getElementById('toggleMenge').checked;
+    const nachMenge = !document.getElementById('toggleMenge').checked;
     if (!data.doknr) { showStatus('Bitte Auftrag-Nr. eingeben.', 'error'); return; }
 
     showStatus('Drucke Position ' + data.pos + ' ' + lang.toUpperCase() + '...', 'printing');
@@ -960,11 +1024,9 @@ def api_drucken():
         record['termin'] = None
 
     nach_menge = data.get('nach_menge', True)
-    if not nach_menge:
-        record['menge'] = 1
 
     try:
-        drucken(record, lang)
+        drucken_batch([record], lang, nach_menge=nach_menge)
         log_printed(record['doknr'], record['pos'])
         return jsonify({
             'ok': True,
@@ -1008,15 +1070,41 @@ def api_drucken_alle():
 
     total = 0
     try:
-        for record in positionen:
-            rec = dict(record)
-            drucken(rec, lang)
+        recs = [dict(r) for r in positionen]
+        drucken_batch(recs, lang, nach_menge=True)
+        for rec in recs:
             log_printed(doknr, rec['pos'])
-            total += rec.get('menge', 1)
+            total += max(1, int(float(rec.get('menge', 1))))
         return jsonify({
             'ok': True,
             'total': total,
             'positionen': len(positionen),
+            'printer': PRINTER_NAME
+        })
+    except Exception as e:
+        return jsonify({'ok': False, 'error': str(e)})
+
+
+@app.route('/api/drucken_alles', methods=['POST'])
+def api_drucken_alles():
+    data = request.json
+    lang = data.get('lang', 'de')
+
+    if not auf_data:
+        return jsonify({'ok': False, 'error': 'Keine Aufträge geladen.'})
+
+    all_recs = [dict(r) for r in auf_data.values()]
+    total = 0
+    try:
+        drucken_batch(all_recs, lang, nach_menge=True)
+        for rec in all_recs:
+            log_printed(rec['doknr'], rec['pos'])
+            total += max(1, int(float(rec.get('menge', 1))))
+        auftraege = len(set(r['doknr'] for r in all_recs))
+        return jsonify({
+            'ok': True,
+            'total': total,
+            'auftraege': auftraege,
             'printer': PRINTER_NAME
         })
     except Exception as e:
