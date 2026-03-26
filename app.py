@@ -192,7 +192,7 @@ def _befuelle_und_drucke(excel, xwb, record, lang, copies):
 
     xws = xwb.Worksheets(sheet_name)
     for _ in range(copies):
-        xws.PrintOut()
+        pass  # xws.PrintOut()  # TESTMODUS: Druck deaktiviert
 
 
 def drucken(record, lang='de'):
@@ -737,56 +737,65 @@ HTML = """<!DOCTYPE html>
     }
   }
 
-  function checkAndDruckenAlles() {
-    if (!confirm('Alle Aufträge (' + document.querySelectorAll('.auf-item').length + ') mit allen Positionen drucken?')) return;
+  async function checkAndDruckenAlles() {
+    const r = await fetch('/api/etiketten_count');
+    const info = await r.json();
+    const body = '<div style="background:#fff3cd;border:1px solid #ffc107;border-radius:8px;padding:12px;margin-bottom:12px;color:#856404;font-weight:600">' +
+      '⚠ Es werden ALLE Aufträge gedruckt!</div>' +
+      '<table style="width:100%;border-collapse:collapse">' +
+      '<tr><td style="padding:6px 0;color:#555">Aufträge:</td><td style="padding:6px 0;font-weight:700;text-align:right">' + info.auftraege + '</td></tr>' +
+      '<tr><td style="padding:6px 0;color:#555">Positionen:</td><td style="padding:6px 0;font-weight:700;text-align:right">' + info.positionen + '</td></tr>' +
+      '<tr style="border-top:2px solid var(--cdr-blue)"><td style="padding:8px 0;color:var(--cdr-blue);font-weight:700">Etiketten total:</td><td style="padding:8px 0;font-weight:700;font-size:18px;text-align:right;color:var(--cdr-blue)">' + info.etiketten + '</td></tr>' +
+      '</table>';
+    const ok = await showModal('Alle Etiketten drucken', body, 'Alle drucken', 'Abbrechen');
+    if (!ok) return;
     showStatus('Drucke ALLE Aufträge...', 'printing');
     setButtons(true);
-    fetch('/api/drucken_alles', {
-      method: 'POST',
-      headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({lang: currentSprache})
-    })
-    .then(r => r.json())
-    .then(result => {
+    try {
+      const res = await fetch('/api/drucken_alles', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({lang: currentSprache})
+      });
+      const result = await res.json();
       if (result.ok) {
         showStatus(result.total + ' Etiketten für ' + result.auftraege + ' Aufträge gedruckt', 'success');
         loadAuftraege();
       } else {
         showStatus('Fehler: ' + result.error, 'error');
       }
-    })
-    .catch(err => showStatus('Fehler: ' + err, 'error'))
-    .finally(() => setButtons(false));
+    } catch(err) { showStatus('Fehler: ' + err, 'error'); }
+    finally { setButtons(false); }
   }
 
-  function checkAndDruckenPos() {
+  async function checkAndDruckenPos() {
     const data = getFormData();
     if (!data.doknr) { showStatus('Bitte Auftrag-Nr. eingeben.', 'error'); return; }
-    // Prüfe ob Position bereits gedruckt
     const posItems = document.querySelectorAll('.pos-list li');
     let alreadyPrinted = false;
     posItems.forEach(li => {
-      if (li.classList.contains('active') && li.classList.contains('printed')) {
-        alreadyPrinted = true;
-      }
+      if (li.classList.contains('active') && li.classList.contains('printed')) alreadyPrinted = true;
     });
-    // Falls keine Positionsliste offen, prüfe Auftrag
     if (posItems.length === 0) {
       const aufLi = document.querySelector('.auf-item[data-nr="' + data.doknr + '"]');
       if (aufLi && aufLi.classList.contains('printed')) alreadyPrinted = true;
     }
     if (alreadyPrinted) {
-      if (!confirm('Position ' + data.pos + ' wurde bereits gedruckt. Trotzdem erneut drucken?')) return;
+      const body = '<p>Position <b>' + data.pos + '</b> von Auftrag <b>' + data.doknr + '</b> wurde bereits gedruckt.</p>';
+      const ok = await showModal('Bereits gedruckt', body, 'Erneut drucken', 'Abbrechen');
+      if (!ok) return;
     }
     druckenPos();
   }
 
-  function checkAndDruckenAlle() {
+  async function checkAndDruckenAlle() {
     const nr = document.getElementById('auftragNr').value.trim();
     if (!nr) { showStatus('Bitte Auftrag-Nr. eingeben.', 'error'); return; }
     const aufLi = document.querySelector('.auf-item[data-nr="' + nr + '"]');
     if (aufLi && aufLi.classList.contains('printed')) {
-      if (!confirm('Auftrag ' + nr + ' wurde bereits gedruckt. Trotzdem erneut drucken?')) return;
+      const body = '<p>Auftrag <b>' + nr + '</b> wurde bereits gedruckt.</p>';
+      const ok = await showModal('Bereits gedruckt', body, 'Erneut drucken', 'Abbrechen');
+      if (!ok) return;
     }
     druckenAlle();
   }
@@ -942,7 +951,35 @@ HTML = """<!DOCTYPE html>
     bar.textContent = text;
     bar.className = 'status-bar ' + type;
   }
+  // ===== Custom Modal =====
+  let modalResolve = null;
+  function showModal(title, body, confirmText, cancelText) {
+    return new Promise(resolve => {
+      modalResolve = resolve;
+      document.getElementById('modalTitle').textContent = title;
+      document.getElementById('modalBody').innerHTML = body;
+      document.getElementById('modalConfirm').textContent = confirmText || 'Drucken';
+      document.getElementById('modalCancel').textContent = cancelText || 'Abbrechen';
+      document.getElementById('modalOverlay').style.display = 'flex';
+    });
+  }
+  function closeModal(result) {
+    document.getElementById('modalOverlay').style.display = 'none';
+    if (modalResolve) { modalResolve(result); modalResolve = null; }
+  }
 </script>
+
+<!-- Modal -->
+<div id="modalOverlay" style="display:none;position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.5);z-index:1000;align-items:center;justify-content:center">
+  <div style="background:#fff;border-radius:12px;box-shadow:0 8px 32px rgba(0,0,0,0.3);max-width:420px;width:90%;overflow:hidden">
+    <div style="background:var(--cdr-blue);color:#fff;padding:16px 20px;font-size:16px;font-weight:700" id="modalTitle"></div>
+    <div style="padding:20px;font-size:14px;line-height:1.6;color:#333" id="modalBody"></div>
+    <div style="display:flex;gap:10px;padding:12px 20px 20px;justify-content:flex-end">
+      <button id="modalCancel" onclick="closeModal(false)" style="padding:8px 20px;border:1px solid var(--cdr-border);background:#f5f5f5;border-radius:6px;cursor:pointer;font-size:13px;font-weight:600;color:#555">Abbrechen</button>
+      <button id="modalConfirm" onclick="closeModal(true)" style="padding:8px 20px;border:none;background:var(--cdr-blue);color:#fff;border-radius:6px;cursor:pointer;font-size:13px;font-weight:600">Drucken</button>
+    </div>
+  </div>
+</div>
 </body>
 </html>"""
 
@@ -1083,6 +1120,22 @@ def api_drucken_alle():
         })
     except Exception as e:
         return jsonify({'ok': False, 'error': str(e)})
+
+
+@app.route('/api/etiketten_count')
+def api_etiketten_count():
+    auftraege = set()
+    positionen = 0
+    etiketten = 0
+    for (doknr, pos), rec in auf_data.items():
+        auftraege.add(doknr)
+        positionen += 1
+        etiketten += max(1, int(float(rec.get('menge', 1))))
+    return jsonify({
+        'auftraege': len(auftraege),
+        'positionen': positionen,
+        'etiketten': etiketten
+    })
 
 
 @app.route('/api/drucken_alles', methods=['POST'])
