@@ -614,7 +614,7 @@ HTML = """<!DOCTYPE html>
   <h3>Aufträge</h3>
   <ul class="auf-list" id="aufList">
     {% for a in auftraege %}
-    <li class="auf-item{% if a.printed %} printed{% endif %}" data-nr="{{ a.nr }}" data-sprache="{{ a.sprache }}" onclick="selectAuftrag('{{ a.nr }}', '{{ a.sprache }}')"><span style="display:inline-block;width:28px;font-size:10px;font-weight:700;color:{% if a.sprache == 'fr' %}#c0392b{% else %}#2e7d32{% endif %}">{{ a.sprache|upper }}</span><strong>{{ a.nr }}</strong> {{ a.kunde }} <span style="color:#888;font-size:11px">{{ a.plz }} {{ a.ort }}</span></li>
+    <li class="auf-item{% if a.printed %} printed{% endif %}" data-nr="{{ a.nr }}" data-sprache="{{ a.sprache }}" onclick="selectAuftrag('{{ a.nr }}', '{{ a.sprache }}')"><span style="display:inline-block;width:28px;font-size:10px;font-weight:700;color:#2e7d32">{{ a.sprache|upper }}</span><strong>{{ a.nr }}</strong> {{ a.kunde }} <span style="color:#888;font-size:11px">{{ a.plz }} {{ a.ort }}</span></li>
     {% endfor %}
   </ul>
 </div>
@@ -760,7 +760,7 @@ HTML = """<!DOCTYPE html>
       const result = await res.json();
       if (result.ok) {
         showStatus(result.total + ' Etiketten für ' + result.auftraege + ' Aufträge gedruckt', 'success');
-        loadAuftraege();
+        location.reload();
       } else {
         showStatus('Fehler: ' + result.error, 'error');
       }
@@ -880,7 +880,7 @@ HTML = """<!DOCTYPE html>
     document.getElementById('position').value = '1';
     currentSprache = sprache || 'de';
     document.getElementById('sprachAnzeige').textContent = currentSprache.toUpperCase();
-    document.getElementById('sprachAnzeige').style.color = currentSprache === 'fr' ? '#c0392b' : '#2e7d32';
+    document.getElementById('sprachAnzeige').style.color = '#2e7d32';
 
     // Highlight + alte Positionslisten entfernen
     document.querySelectorAll('.pos-list').forEach(ul => ul.remove());
