@@ -3,7 +3,10 @@ CDR Glas AG – Handelsetiketten drucken (Web-App)
 Flask-basierte Web-Applikation.
 """
 import os
+import sys
 import json
+import logging
+import socket
 from datetime import datetime
 from copy import copy
 import openpyxl
@@ -991,11 +994,39 @@ KUNDEN_PATH = r'R:\CDR-Glas\Lagerverwaltung\KUNDEN.xlsx'
 def reload_auf():
     """AUF.xlsx und KUNDEN.xlsx neu einlesen."""
     global auf_data, kunden_data
-    if os.path.exists(KUNDEN_PATH):
-        kunden_data = load_kunden(KUNDEN_PATH)
-    if os.path.exists(AUF_PATH):
-        auf_data = load_auf(AUF_PATH)
+    try:
+        if os.path.exists(KUNDEN_PATH):
+            kunden_data = load_kunden(KUNDEN_PATH)
+            print(f'KUNDEN.xlsx geladen: {len(kunden_data)} Kunden')
+        else:
+            print(f'WARNUNG: {KUNDEN_PATH} nicht gefunden!')
+    except Exception as e:
+        print(f'FEHLER beim Laden von KUNDEN.xlsx: {e}')
+
+    try:
+        if os.path.exists(AUF_PATH):
+            auf_data = load_auf(AUF_PATH)
+            print(f'AUF.xlsx geladen: {len(auf_data)} Positionen')
+        else:
+            print(f'WARNUNG: {AUF_PATH} nicht gefunden!')
+    except Exception as e:
+        print(f'FEHLER beim Laden von AUF.xlsx: {e}')
+
     return auf_data
+
+@app.route('/api/health')
+def api_health():
+    """Health-Check: liefert Status der App für Startscripts."""
+    n_auf = len(auf_data)
+    n_kunden = len(kunden_data)
+    return jsonify({
+        'status': 'ok',
+        'auftraege': n_auf,
+        'kunden': n_kunden,
+        'auf_path': AUF_PATH,
+        'kunden_path': KUNDEN_PATH,
+    })
+
 
 @app.route('/')
 def index():
@@ -1164,22 +1195,112 @@ def api_drucken_alles():
         return jsonify({'ok': False, 'error': str(e)})
 
 
+def is_port_in_use(port):
+    """Prüft ob ein Port bereits belegt ist."""
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        return s.connect_ex(('127.0.0.1', port)) == 0
+
+
+def setup_logging():
+    """Logging in Datei und Konsole einrichten."""
+    log_path = os.path.join(SCRIPT_DIR, 'app_log.txt')
+    logging.basicConfig(
+        level=logging.INFO,
+        format='%(asctime)s %(message)s',
+        datefmt='%Y-%m-%d %H:%M:%S',
+        handlers=[
+            logging.FileHandler(log_path, encoding='utf-8'),
+            logging.StreamHandler(sys.stdout),
+        ]
+    )
+    return logging.getLogger(__name__)
+
+
+def find_free_port(start_port, max_tries=10):
+    """Findet einen freien Port ab start_port."""
+    for offset in range(max_tries):
+        port = start_port + offset
+        if not is_port_in_use(port):
+            return port
+    return None
+
+
+# Port-Datei: damit VBS-Scripts wissen, auf welchem Port die App laeuft
+PORT_FILE = os.path.join(SCRIPT_DIR, 'app_port.txt')
+
+
 if __name__ == '__main__':
+    logger = setup_logging()
+    PORT = 5000
+
+    # Prüfe ob Port bereits belegt
+    if is_port_in_use(PORT):
+        # Prüfe ob die laufende Instanz gesund ist
+        import urllib.request
+        try:
+            resp = urllib.request.urlopen(f'http://127.0.0.1:{PORT}/api/health', timeout=3)
+            if resp.status == 200:
+                logger.info(f'App läuft bereits auf Port {PORT} - keine neue Instanz noetig.')
+                sys.exit(0)
+        except Exception:
+            pass
+        # Port belegt aber App antwortet nicht -> Zombie-Prozess
+        logger.warning(f'Port {PORT} ist belegt, aber App antwortet nicht. Versuche Prozess zu beenden...')
+        try:
+            import subprocess
+            result = subprocess.run(
+                ['powershell', '-NoProfile', '-Command',
+                 f'Get-NetTCPConnection -LocalPort {PORT} -State Listen -ErrorAction SilentlyContinue | '
+                 f'ForEach-Object {{ Stop-Process -Id $_.OwningProcess -Force -ErrorAction SilentlyContinue }}'],
+                capture_output=True, text=True, timeout=10
+            )
+            import time
+            time.sleep(1)
+        except Exception as e:
+            logger.error(f'Konnte Prozess nicht beenden: {e}')
+
+        if is_port_in_use(PORT):
+            # Fallback: freien Port suchen
+            free_port = find_free_port(PORT + 1)
+            if free_port:
+                logger.warning(f'Port {PORT} ist blockiert. Verwende Ausweich-Port {free_port}.')
+                PORT = free_port
+            else:
+                logger.error(f'Kein freier Port gefunden. App kann nicht gestartet werden.')
+                sys.exit(1)
+        else:
+            logger.info(f'Port {PORT} wurde freigegeben.')
+
     # KUNDEN.xlsx laden
-    kunden_path = r'R:\CDR-Glas\Lagerverwaltung\KUNDEN.xlsx'
-    if os.path.exists(kunden_path):
-        kunden_data = load_kunden(kunden_path)
-        print(f'KUNDEN.xlsx geladen: {len(kunden_data)} Kunden')
-    else:
-        print(f'WARNUNG: {kunden_path} nicht gefunden!')
+    try:
+        if os.path.exists(KUNDEN_PATH):
+            kunden_data = load_kunden(KUNDEN_PATH)
+            logger.info(f'KUNDEN.xlsx geladen: {len(kunden_data)} Kunden')
+        else:
+            logger.warning(f'KUNDEN.xlsx nicht gefunden: {KUNDEN_PATH}')
+    except Exception as e:
+        logger.error(f'Fehler beim Laden von KUNDEN.xlsx: {e}')
 
-    # AUF.xlsx vom Netzlaufwerk laden
-    auf_path = r'R:\CDR-Glas\Lagerverwaltung\AUF.xlsx'
-    if os.path.exists(auf_path):
-        auf_data = load_auf(auf_path)
-        print(f'AUF.xlsx geladen: {len(auf_data)} Aufträge von {auf_path}')
-    else:
-        print(f'WARNUNG: {auf_path} nicht gefunden!')
+    # AUF.xlsx laden
+    try:
+        if os.path.exists(AUF_PATH):
+            auf_data = load_auf(AUF_PATH)
+            n_auftraege = len(set(k[0] for k in auf_data.keys()))
+            logger.info(f'AUF.xlsx geladen: {n_auftraege} Aufträge / {len(auf_data)} Positionen von {AUF_PATH}')
+        else:
+            logger.warning(f'AUF.xlsx nicht gefunden: {AUF_PATH}')
+    except Exception as e:
+        logger.error(f'Fehler beim Laden von AUF.xlsx: {e}')
 
-    print('Starte Web-App auf http://localhost:5000')
-    app.run(host='0.0.0.0', port=5000, debug=False)
+    # Port-Datei schreiben, damit Scripts den Port kennen
+    with open(PORT_FILE, 'w') as f:
+        f.write(str(PORT))
+    # Auch auf Netzlaufwerk, damit Mitarbeiter den Port finden
+    try:
+        with open(r'R:\CDR-Glas\Datentrans\app_port.txt', 'w') as f:
+            f.write(str(PORT))
+    except Exception:
+        pass
+
+    logger.info(f'Starte Web-App auf http://0.0.0.0:{PORT}')
+    app.run(host='0.0.0.0', port=PORT, debug=False)
