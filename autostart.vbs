@@ -54,9 +54,9 @@ WScript.Sleep 1000
 WshShell.Run "powershell -NoProfile -Command ""if (-not (Get-PrinterPort -Name 'Ne04:' -ErrorAction SilentlyContinue)) { Add-PrinterPort -Name 'Ne04:' -PrinterHostAddress '192.168.67.71' }; Set-Printer -Name 'CAB-EOS5/200' -PortName 'Ne04:'""", 0, True
 WScript.Sleep 500
 
-' --- 5. App starten ---
-LogLine "Starte python.exe app.py"
-WshShell.Run "cmd /c C:\Python314\python.exe app.py", 0, False
+' --- 5. App starten (via runapp.bat - Auto-Restart-Wrapper) ---
+LogLine "Starte runapp.bat"
+WshShell.Run "cmd /c runapp.bat", 0, False
 
 ' --- 6. Warten bis App bereit ist ---
 For i = 1 To maxRetries
