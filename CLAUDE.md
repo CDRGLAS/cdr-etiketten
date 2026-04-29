@@ -18,11 +18,12 @@ Druckt Glas-Handelsetiketten auf CAB-Etikettendrucker.
 
 ## Start-Mechanismus
 - `autostart.vbs` – Wird per Windows Scheduled Task "CDR Etiketten Autostart" bei Anmeldung gestartet (kein Browser)
+- `runapp.bat` – Auto-Restart-Wrapper, wird vom autostart.vbs aufgerufen. Startet `python app.py` in Endlosschleife. Bei 5 schnellen Crashes (<30s) erfolgt 60s Pause, danach weiter. stderr → `crash_log.txt`.
+- `watchdog.bat` – Wird per Scheduled Task "CDR Etiketten Watchdog" alle 5 Min ausgeführt. Health-Check via curl, ruft autostart.vbs nur wenn App tot ist.
 - `start.vbs` – Manueller Start mit Browser, Desktop-Verknüpfung zeigt hierhin
-- Beide Scripts prüfen per Health-Check (`/api/health`) ob die App schon läuft
 - App läuft auf Port 5000 (Fallback auf 5001+ wenn belegt)
 - Port wird in `app_port.txt` geschrieben
-- Logging in `app_log.txt` – bei Problemen immer hier nachschauen
+- Logs: `app_log.txt` (Python stdout, Flask-Requests), `autostart_log.txt` (VBS+Wrapper), `crash_log.txt` (Python stderr/Tracebacks)
 
 ## Bekannte Probleme / Hinweise
 - Der Mitarbeiter startet die App remote, aber der Prozess läuft auf Gabriels PC unter dem Benutzer des Mitarbeiters. Dadurch kann Gabriel den Prozess nicht ohne Admin-Rechte beenden (Zugriff verweigert). Die App hat deshalb eine Fallback-Port-Logik.
