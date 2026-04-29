@@ -27,8 +27,10 @@ if !DURATION! LSS 30 (
 )
 
 if !FAST_CRASHES! GEQ 5 (
-    echo [%date% %time%] FEHLER: 5 schnelle Crashes - Wrapper bricht ab >> autostart_log.txt
-    exit /b 1
+    echo [%date% %time%] 5 schnelle Crashes - pausiere 60s und versuche erneut >> autostart_log.txt
+    ping -n 61 127.0.0.1 >nul
+    set FAST_CRASHES=0
+    goto loop
 )
 
 REM Kurze Pause vor Restart

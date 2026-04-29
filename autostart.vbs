@@ -12,10 +12,7 @@ maxRetries = 10
 
 LogLine "Autostart gestartet"
 
-' --- 0. Initial warten (Login-Zeit, Netzwerk stabilisieren) ---
-WScript.Sleep 15000
-
-' --- 1. Pruefe ob App bereits laeuft (Port aus Datei oder Standard 5000) ---
+' --- 1. Schneller Check: laeuft die App bereits? (kein Sleep, fuer Watchdog) ---
 appPort = ReadPort()
 If appPort <> "" Then
     healthUrl = "http://localhost:" & appPort & "/api/health"
@@ -31,6 +28,9 @@ If appPort <> "5000" Then
         WScript.Quit 0
     End If
 End If
+
+' --- 1a. App laeuft nicht: kurz warten falls wir gerade booten (Netzwerk stabilisieren) ---
+WScript.Sleep 5000
 
 ' --- 2. Warten bis Netzlaufwerk R: verfuegbar ist (bis zu 60s) ---
 driveRetries = 0
