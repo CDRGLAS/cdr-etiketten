@@ -19,7 +19,7 @@ Druckt Glas-Handelsetiketten auf CAB-Etikettendrucker.
 ## Start-Mechanismus
 - `autostart.vbs` – Wird per Windows Scheduled Task "CDR Etiketten Autostart" bei Anmeldung gestartet (kein Browser)
 - `runapp.bat` – Auto-Restart-Wrapper, wird vom autostart.vbs aufgerufen. Startet `python app.py` in Endlosschleife. Bei 5 schnellen Crashes (<30s) erfolgt 60s Pause, danach weiter. stderr → `crash_log.txt`.
-- `watchdog.bat` – Wird per Scheduled Task "CDR Etiketten Watchdog" alle 5 Min ausgeführt. Health-Check via curl, ruft autostart.vbs nur wenn App tot ist.
+- `watchdog.vbs` – Wird per Scheduled Task "CDR Etiketten Watchdog" alle 5 Min ausgeführt. Health-Check via HTTP, ruft autostart.vbs nur wenn App tot ist. **Wichtig: VBS statt BAT, weil cmd.exe ein kurzes Fenster aufpoppt — wscript.exe nicht.**
 - `start.vbs` – Manueller Start mit Browser, Desktop-Verknüpfung zeigt hierhin
 - App läuft auf Port 5000 (Fallback auf 5001+ wenn belegt)
 - Port wird in `app_port.txt` geschrieben
